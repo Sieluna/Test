@@ -1,36 +1,44 @@
+[workspace]
+members = ["kernels", "shared_structs"]
+resolver = "2"
+
+[workspace.dependencies]
+bytemuck = { version = "1", default-features = false }
+glam = { version = "0.30", default-features = false }
+kernels = { path = "kernels" }
+shared_structs = { path = "shared_structs" }
+spirv-std = { git = "https://github.com/Rust-GPU/rust-gpu.git" }
+
 [package]
 name = "rustic"
 version = "0.1.0"
-authors = ["Pema Malling <pemamalling@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-shared_structs = { path = "shared_structs" }
-kernels = { path = "kernels" }
-bytemuck = { version = "1.13.1", features = ["derive"] }
-glam = { version = "0.22.0", features = ["bytemuck"] }
-gpgpu = { git = "https://github.com/pema99/gpgpu-rs.git", branch = "dev", features = ["image", "integrate-image"] }
-rand = "0.8.5"
-oidn = { version = "1.4.3", optional = true }
-lazy_static = "1.4.0"
-russimp = { version = "2.0.5", features = ["prebuilt"] }
-image = { version = "0.24.6", default-features = false, features = ["png", "jpeg", "hdr", "tga", "exr", "openexr"] }
-parking_lot = "0.12.1"
-winit = "0.27.5"
-wgpu = { version = "0.14.2", features = ["spirv"] }
-egui-wgpu = "0.20.0"
-egui_winit_platform = "0.17.0"
-egui = "0.20.0"
-pollster = "0.2.5"
-tinyfiledialogs = "3.9.1"
-fast_image_resize = "2.7.3"
-rayon = "1.7.0"
+shared_structs.workspace = true
+kernels.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+glam = { workspace = true, features = ["bytemuck"] }
+rand = "0.8"
+lazy_static = "1"
+gltf = "1"
+base64 = "0.13"
+image = { version = "0.25", default-features = false, features = ["png", "hdr"] }
+parking_lot = "0.12"
+thiserror = "2"
+ndarray = "0.16"
+futures = "0.3"
+log = "0.4"
+winit = "0.30"
+wgpu = { version = "23", features = ["spirv"] }
+egui-wgpu = "0.30"
+egui-winit = "0.30"
+egui = "0.30"
+pollster = "0.4"
+rayon = "1"
 
 [build-dependencies]
-spirv-builder = "0.7.0"
-
-[features]
-oidn = ["dep:oidn"]
+spirv-builder = { git = "https://github.com/Rust-GPU/rust-gpu.git" }
 
 [profile.release.build-override]
 opt-level = 3
@@ -41,11 +49,3 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
-incremental = true
-
-[dev-dependencies]
-criterion = { version = "0.3", features = ["html_reports"] }
-
-[[bench]]
-name = "benchmark"
-harness = false

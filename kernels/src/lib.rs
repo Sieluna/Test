@@ -1,21 +1,22 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
+mod bsdf;
+mod intersection;
+mod light_pick;
+mod rng;
+mod skybox;
+mod util;
+mod vec;
+
 use bsdf::BSDF;
-use glam::*;
 use intersection::BVHReference;
-use shared_structs::{Image, Sampler};
-use shared_structs::{TracingConfig, BVHNode, MaterialData, PerVertexData, LightPickEntry, NextEventEstimation};
+use shared_structs::{
+    BVHNode, Image, LightPickEntry, MaterialData, NextEventEstimation, PerVertexData, Sampler,
+    TracingConfig,
+};
 #[allow(unused_imports)]
 use spirv_std::num_traits::Float;
-use spirv_std::{glam, spirv};
-
-mod bsdf;
-mod rng;
-mod util;
-mod intersection;
-mod vec;
-mod skybox;
-mod light_pick;
+use spirv_std::{glam::*, spirv};
 
 #[cfg_attr(target_arch = "spirv", inline(always))]
 pub fn trace_pixel(
@@ -47,7 +48,8 @@ pub fn trace_pixel(
     // Setup camera.
     let mut ray_origin = config.cam_position.xyz();
     let mut ray_direction = Vec3::new(uv.x, uv.y, 1.0).normalize();
-    let euler_mat = Mat3::from_rotation_y(config.cam_rotation.y) * Mat3::from_rotation_x(config.cam_rotation.x);
+    let euler_mat =
+        Mat3::from_rotation_y(config.cam_rotation.y) * Mat3::from_rotation_x(config.cam_rotation.x);
     ray_direction = euler_mat * ray_direction;
 
     let bvh = BVHReference {
@@ -57,16 +59,18 @@ pub fn trace_pixel(
     let mut throughput = Vec3::ONE;
     let mut radiance = Vec3::ZERO;
     let mut last_bsdf_sample = bsdf::BSDFSample::default();
-    let mut last_light_sample = light_pick::DirectLightSample::default(); 
+    let mut last_light_sample = light_pick::DirectLightSample::default();
 
     for bounce in 0..config.max_bounces {
-        let trace_result = bvh.intersect_nearest(per_vertex_buffer, index_buffer, ray_origin, ray_direction);
+        let trace_result =
+            bvh.intersect_nearest(per_vertex_buffer, index_buffer, ray_origin, ray_direction);
         let hit = ray_origin + ray_direction * trace_result.t;
 
         if !trace_result.hit {
             if config.has_skybox == 0 {
                 // Fallback to procedural skybox
-                radiance += throughput * skybox::scatter(config.sun_direction, ray_origin, ray_direction);
+                radiance +=
+                    throughput * skybox::scatter(config.sun_direction, ray_origin, ray_direction);
             } else {
                 // Read skybox from image
                 let rotation = config.sun_direction.z.atan2(config.sun_direction.x);
@@ -74,7 +78,9 @@ pub fn trace_pixel(
                 let u = 0.5 + rotated.z.atan2(rotated.x) / (2.0 * core::f32::consts::PI);
                 let v = 1.0 - (0.5 + rotated.y.asin() / core::f32::consts::PI);
                 let intensity = config.sun_direction.w * (1.0 / 15.0);
-                radiance += throughput * skybox.sample_by_lod(*sampler, Vec2::new(u, v), 0.0).xyz() * intensity;
+                radiance += throughput
+                    * skybox.sample_by_lod(*sampler, Vec2::new(u, v), 0.0).xyz()
+                    * intensity;
             }
             break;
         } else {
@@ -101,8 +107,14 @@ pub fn trace_pixel(
 
                 // If we have hit a light source, and we are using NEE with MIS, we use last bounces data
                 // to add the BSDF contribution, weighted by MIS.
-                if nee_mode.uses_mis() && last_bsdf_sample.sampled_lobe == bsdf::LobeType::DiffuseReflection {
-                    let direct_contribution = light_pick::calculate_bsdf_mis_contribution(&trace_result, &last_bsdf_sample, &last_light_sample);
+                if nee_mode.uses_mis()
+                    && last_bsdf_sample.sampled_lobe == bsdf::LobeType::DiffuseReflection
+                {
+                    let direct_contribution = light_pick::calculate_bsdf_mis_contribution(
+                        &trace_result,
+                        &last_bsdf_sample,
+                        &last_light_sample,
+                    );
                     radiance += util::mask_nan(direct_contribution);
                     break;
                 }
@@ -139,7 +151,7 @@ pub fn trace_pixel(
                 let tbn = Mat3::from_cols(tangent, tangent.cross(normal), normal);
                 normal = (tbn * normal_map.xyz()).normalize();
             }
-            
+
             // Sample BSDF
             let bsdf = bsdf::get_pbr_bsdf(config, &material, uv, atlas, sampler);
             let bsdf_sample = bsdf.sample(-ray_direction, normal, &mut rng_state);
@@ -159,7 +171,7 @@ pub fn trace_pixel(
                     hit,
                     normal,
                     ray_direction,
-                    &mut rng_state
+                    &mut rng_state,
                 );
                 radiance += util::mask_nan(last_light_sample.direct_light_contribution);
             }
@@ -185,7 +197,6 @@ pub fn trace_pixel(
     (radiance.extend(1.0), rng_state.next_state())
 }
 
-
 #[spirv(compute(threads(8, 8, 1)))]
 pub fn trace_kernel(
     #[spirv(global_invocation_id)] id: UVec3,
@@ -205,7 +216,7 @@ pub fn trace_kernel(
     if id.x > config.width || id.y > config.height {
         return;
     }
-    
+
     let index = (id.y * config.width + id.x) as usize;
 
     let (radiance, rng_state) = trace_pixel(
@@ -221,7 +232,7 @@ pub fn trace_kernel(
         atlas,
         skybox,
     );
-    
+
     output[index] += radiance;
     rng[index] = rng_state;
 }

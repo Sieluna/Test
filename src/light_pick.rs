@@ -46,7 +46,11 @@ pub fn build_light_pick_table(
         let triangle_area = triangle_area(a, b, c);
         triangle_areas[i] = triangle_area;
 
-        let triangle_power = material_datas[triangle.w as usize].emissive.xyz().dot(Vec3::ONE) * triangle_area;
+        let triangle_power = material_datas[triangle.w as usize]
+            .emissive
+            .xyz()
+            .dot(Vec3::ONE)
+            * triangle_area;
         triangle_powers[i] = triangle_power;
         total_power += triangle_power;
     }

@@ -1,17 +1,30 @@
-use shared_structs::{LightPickEntry, PerVertexData, MaterialData, NextEventEstimation};
-use spirv_std::glam::{Vec3, UVec4, Vec4Swizzles};
+use shared_structs::{LightPickEntry, MaterialData, NextEventEstimation, PerVertexData};
+use spirv_std::glam::{UVec4, Vec3, Vec4Swizzles};
 #[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 
-use crate::{rng::RngState, util, bsdf::{self, BSDF}, intersection::{BVHReference, self}};
+use crate::{
+    bsdf::{self, BSDF},
+    intersection::{self, BVHReference},
+    rng::RngState,
+    util,
+};
 
 pub fn pick_light(table: &[LightPickEntry], rng_state: &mut RngState) -> (u32, f32, f32) {
     let rng = rng_state.gen_r2();
     let entry = table[(rng.x * table.len() as f32) as usize];
     if rng.y < entry.ratio {
-        (entry.triangle_index_a, entry.triangle_area_a, entry.triangle_pick_pdf_a)
+        (
+            entry.triangle_index_a,
+            entry.triangle_area_a,
+            entry.triangle_pick_pdf_a,
+        )
     } else {
-        (entry.triangle_index_b, entry.triangle_area_b, entry.triangle_pick_pdf_b)
+        (
+            entry.triangle_index_b,
+            entry.triangle_area_b,
+            entry.triangle_pick_pdf_b,
+        )
     }
 }
 
@@ -27,12 +40,17 @@ pub fn pick_triangle_point(a: Vec3, b: Vec3, c: Vec3, rng_state: &mut RngState) 
 // - light_distance is the distance from the chosen point to the point being shaded
 // - light_normal is the normal of the light source at the chosen point
 // - light_direction is the direction from the light source to the point being shaded
-pub fn calculate_light_pdf(light_area: f32, light_distance: f32, light_normal: Vec3, light_direction: Vec3) -> f32 {
+pub fn calculate_light_pdf(
+    light_area: f32,
+    light_distance: f32,
+    light_normal: Vec3,
+    light_direction: Vec3,
+) -> f32 {
     /* This warrants some explanation for my future dumb self:
     (In case anyone but me reads this, I use "mathover" VSCode extension to render the LaTeX inline)
     When we estimate the rendering equation by monte carlo integration, we typically integrate over the solid angle domain,
     but with direct light sampling, we use the (surface) area domain of the light sources, and need to convert between the 2.
-    
+
     An integral for direct lighting can be written as so:
     # Math: \int_{\Omega_d} f_r(x, w_i, w_o) L_i(x, w_i) w_i \cdot w_n dw
     Where \Omega_d crucially denotes only the part of the hemisphere - the part which the visible lights project onto.
@@ -50,7 +68,7 @@ pub fn calculate_light_pdf(light_area: f32, light_distance: f32, light_normal: V
     by a distance of r, the projected area grows by a factor of r^2. This is the inverse square law, and the reason for the r^2 term.
     As we tilt the light source away from the shading point, the projected area also grows. The factor with which it grows is determined
     by the cosine of the angle between the surface normal on the light source and the negated incoming light direction. As the angle grows,
-    the cosine shrinks. Since the area should grow and not shrink when this happens, we have the \frac{1}{-w_i \cdot n} term. Since both 
+    the cosine shrinks. Since the area should grow and not shrink when this happens, we have the \frac{1}{-w_i \cdot n} term. Since both
     vectors are normalized, that dot product is exactly the cosine of the angle. See https://arxiv.org/abs/1205.4447 for more details.
 
     We can write out an estimator for our integral over area domain, assuming uniform sampling over the surface of the light source:
@@ -147,12 +165,23 @@ pub fn sample_direct_lighting(
     );
     if !light_trace.hit {
         // Calculate light pdf for this sample
-        let light_pdf = calculate_light_pdf(light_area, light_distance, light_normal, light_direction);
+        let light_pdf =
+            calculate_light_pdf(light_area, light_distance, light_normal, light_direction);
         if light_pdf > 0.0 {
             // Calculate BSDF attenuation for this sample
-            let bsdf_attenuation = surface_bsdf.evaluate(-ray_direction, surface_normal, light_direction, bsdf::LobeType::DiffuseReflection);
+            let bsdf_attenuation = surface_bsdf.evaluate(
+                -ray_direction,
+                surface_normal,
+                light_direction,
+                bsdf::LobeType::DiffuseReflection,
+            );
             // Calculate BSDF pdf for this sample
-            let bsdf_pdf = surface_bsdf.pdf(-ray_direction, surface_normal, light_direction, bsdf::LobeType::DiffuseReflection);
+            let bsdf_pdf = surface_bsdf.pdf(
+                -ray_direction,
+                surface_normal,
+                light_direction,
+                bsdf::LobeType::DiffuseReflection,
+            );
             if bsdf_pdf > 0.0 {
                 // MIS - add the weighted sample
                 let weight = get_weight(nee_mode, light_pdf, bsdf_pdf);
@@ -179,7 +208,7 @@ pub fn sample_direct_lighting(
 pub fn calculate_bsdf_mis_contribution(
     trace_result: &intersection::TraceResult,
     last_bsdf_sample: &bsdf::BSDFSample,
-    last_light_sample: &DirectLightSample
+    last_light_sample: &DirectLightSample,
 ) -> Vec3 {
     // If we haven't hit the same light as we sampled directly, no contribution
     if trace_result.triangle_index != last_light_sample.light_triangle_index {
@@ -187,11 +216,22 @@ pub fn calculate_bsdf_mis_contribution(
     }
 
     // Calculate the light pdf for this sample
-    let light_pdf = calculate_light_pdf(last_light_sample.light_area, trace_result.t, last_light_sample.light_normal, last_bsdf_sample.sampled_direction);
+    let light_pdf = calculate_light_pdf(
+        last_light_sample.light_area,
+        trace_result.t,
+        last_light_sample.light_normal,
+        last_bsdf_sample.sampled_direction,
+    );
     if light_pdf > 0.0 {
         // MIS - add the weighted sample
-        let weight = get_weight(NextEventEstimation::MultipleImportanceSampling, last_bsdf_sample.pdf, light_pdf);
-        let direct = (last_bsdf_sample.spectrum * last_light_sample.light_emission * weight / last_bsdf_sample.pdf) / last_light_sample.light_pick_pdf;
+        let weight = get_weight(
+            NextEventEstimation::MultipleImportanceSampling,
+            last_bsdf_sample.pdf,
+            light_pdf,
+        );
+        let direct = (last_bsdf_sample.spectrum * last_light_sample.light_emission * weight
+            / last_bsdf_sample.pdf)
+            / last_light_sample.light_pick_pdf;
         last_light_sample.throughput * direct
     } else {
         Vec3::ZERO

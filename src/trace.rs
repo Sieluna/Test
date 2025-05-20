@@ -1,32 +1,42 @@
-const KERNEL: &[u8] = include_bytes!(env!("kernels.spv"));
-const BLUE_BYTES: &[u8] = include_bytes!("resources/bluenoise.png");
-lazy_static::lazy_static! {
-    pub static ref FW: gpgpu::Framework = make_framework();
-    pub static ref BLUE_TEXTURE: RgbaImage = Reader::new(Cursor::new(BLUE_BYTES)).with_guessed_format().unwrap().decode().unwrap().into_rgba8();
-}
+use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
-use glam::{UVec2, Vec4, UVec3};
-use gpgpu::{
-    BufOps, DescriptorSet, GpuBuffer, GpuBufferUsage, GpuUniformBuffer, Kernel, Program, Shader, Sampler, SamplerWrapMode, SamplerFilterMode, GpuConstImage, primitives::pixels::Rgba32Float
-};
-use image::{RgbaImage, io::Reader, GenericImageView};
+use glam::{UVec2, UVec3, Vec4};
+use image::{GenericImageView, ImageReader, RgbaImage};
 use parking_lot::RwLock;
 use pollster::FutureExt;
+use rayon::prelude::*;
 use shared_structs::CpuImage;
 pub use shared_structs::TracingConfig;
-use std::{sync::{
-    atomic::{Ordering, AtomicBool, AtomicU32},
-    Arc,
-}, io::Cursor};
-use rayon::prelude::*;
 
-use crate::{asset::{World, GpuWorld, dynamic_image_to_cpu_buffer, load_dynamic_image, dynamic_image_to_gpu_image, fallback_gpu_image, fallback_cpu_buffer}};
+use crate::asset::{
+    dynamic_image_to_cpu_buffer, dynamic_image_to_gpu_image, fallback_cpu_buffer,
+    fallback_gpu_image, load_dynamic_image, GpuWorld, World,
+};
 
-fn make_framework() -> gpgpu::Framework {
+use super::framework::{
+    primitives::pixels::Rgba32Float, BufOps, DescriptorSet, Framework, GpuBuffer, GpuBufferUsage,
+    GpuConstImage, GpuUniformBuffer, Kernel, Program, Sampler, SamplerFilterMode, SamplerWrapMode,
+    Shader,
+};
+
+const KERNEL: &[u8] = include_bytes!(env!("kernels.spv"));
+const BLUE_BYTES: &[u8] = include_bytes!("resources/bluenoise.png");
+
+lazy_static::lazy_static! {
+    pub static ref FW: Framework = make_framework();
+    pub static ref BLUE_TEXTURE: RgbaImage = ImageReader::new(Cursor::new(BLUE_BYTES)).with_guessed_format().unwrap().decode().unwrap().into_rgba8();
+}
+
+fn make_framework() -> Framework {
     let backend = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
-    let power_preference = wgpu::util::power_preference_from_env()
-        .unwrap_or(wgpu::PowerPreference::HighPerformance);
-    let instance = wgpu::Instance::new(backend);
+    let power_preference =
+        wgpu::util::power_preference_from_env().unwrap_or(wgpu::PowerPreference::HighPerformance);
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: backend,
+        ..Default::default()
+    });
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference,
@@ -34,7 +44,7 @@ fn make_framework() -> gpgpu::Framework {
         })
         .block_on()
         .expect("Failed at adapter creation.");
-    gpgpu::Framework::new(adapter, std::time::Duration::from_millis(1)).block_on()
+    Framework::new(adapter, std::time::Duration::from_millis(1)).block_on()
 }
 
 pub struct TracingState {
@@ -65,7 +75,7 @@ impl TracingState {
         (config, framebuffer)
     }
 
-    pub fn new (width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         let (config, framebuffer) = Self::make_view_dependent_state(width, height, None);
         let config = RwLock::new(config);
         let framebuffer = RwLock::new(framebuffer);
@@ -76,7 +86,7 @@ impl TracingState {
         let use_blue_noise = AtomicBool::new(true);
         let interacting = AtomicBool::new(false);
         let dirty = AtomicBool::new(false);
-        
+
         Self {
             framebuffer,
             running,
@@ -122,26 +132,14 @@ impl<'fw> PathTracingKernel<'fw> {
     }
 }
 
-#[cfg(feature = "oidn")]
-fn denoise_image(width: usize, height: usize, input: &mut [f32]) {
-    let device = oidn::Device::new();
-    oidn::RayTracing::new(&device)
-        .hdr(true)
-        .srgb(false)
-        .image_dimensions(width, height)
-        .filter_in_place(input)
-        .expect("Filter config error!");
-}
-
-pub fn trace_gpu(
-    scene_path: &str,
-    skybox_path: Option<&str>,
-    state: Arc<TracingState>,
-) {
+pub fn trace_gpu(scene_path: &str, skybox_path: Option<&str>, state: Arc<TracingState>) {
     let Some(world) = World::from_path(scene_path).map(|w| w.into_gpu()) else {
         return;
     };
-    let skybox = skybox_path.and_then(load_dynamic_image).map(dynamic_image_to_gpu_image).unwrap_or_else(|| fallback_gpu_image());
+    let skybox = skybox_path
+        .and_then(load_dynamic_image)
+        .map(dynamic_image_to_gpu_image)
+        .unwrap_or_else(|| fallback_gpu_image());
 
     let screen_width = state.config.read().width;
     let screen_height = state.config.read().height;
@@ -152,7 +150,9 @@ pub fn trace_gpu(
     for y in 0..screen_height {
         for x in 0..screen_width {
             let pixel_index = (y * screen_width + x) as usize;
-            let pixel = BLUE_TEXTURE.get_pixel(x % BLUE_TEXTURE.width(), y % BLUE_TEXTURE.height())[0] as f32 / 255.0;
+            let pixel = BLUE_TEXTURE.get_pixel(x % BLUE_TEXTURE.width(), y % BLUE_TEXTURE.height())
+                [0] as f32
+                / 255.0;
             rng_data_blue[pixel_index].x = 0;
             rng_data_blue[pixel_index].y = (pixel * 4294967295.0) as u32;
             rng_data_uniform[pixel_index].x = rand::Rng::gen(&mut rng);
@@ -161,12 +161,24 @@ pub fn trace_gpu(
 
     // Restore previous state, if there is any
     let samples_init = state.samples.load(Ordering::Relaxed) as f32;
-    let output_buffer_init = state.framebuffer.read().chunks(3).map(|c| Vec4::new(c[0], c[1], c[2], 1.0) * samples_init).collect::<Vec<_>>();
+    let output_buffer_init = state
+        .framebuffer
+        .read()
+        .chunks(3)
+        .map(|c| Vec4::new(c[0], c[1], c[2], 1.0) * samples_init)
+        .collect::<Vec<_>>();
 
     // Setup tracing state
     let pixel_count = (screen_width * screen_height) as u64;
     let config_buffer = GpuUniformBuffer::from_slice(&FW, &[*state.config.read()]);
-    let rng_buffer = GpuBuffer::from_slice(&FW, if state.use_blue_noise.load(Ordering::Relaxed) { &rng_data_blue } else { &rng_data_uniform });
+    let rng_buffer = GpuBuffer::from_slice(
+        &FW,
+        if state.use_blue_noise.load(Ordering::Relaxed) {
+            &rng_data_blue
+        } else {
+            &rng_data_uniform
+        },
+    );
     let output_buffer = GpuBuffer::from_slice(&FW, &output_buffer_init);
 
     let mut image_buffer_raw: Vec<Vec4> = vec![Vec4::ZERO; pixel_count as usize];
@@ -183,8 +195,9 @@ pub fn trace_gpu(
             rt.0.enqueue(screen_width.div_ceil(8), screen_height.div_ceil(8), 1);
             FW.poll_blocking();
             finished_samples += 1;
-            
-            flush |= state.interacting.load(Ordering::Relaxed) || state.dirty.load(Ordering::Relaxed);
+
+            flush |=
+                state.interacting.load(Ordering::Relaxed) || state.dirty.load(Ordering::Relaxed);
             if flush {
                 break;
             }
@@ -203,14 +216,11 @@ pub fn trace_gpu(
             image_buffer[i * 3 + 2] = col.z / sample_count;
         }
 
-        // Denoise
-        #[cfg(feature = "oidn")]
-        if state.denoise.load(Ordering::Relaxed) && !flush {
-            denoise_image(screen_width as usize, screen_height as usize, &mut image_buffer);
-        }
-
         // Push to render thread
-        state.framebuffer.write().copy_from_slice(image_buffer.as_slice());
+        state
+            .framebuffer
+            .write()
+            .copy_from_slice(image_buffer.as_slice());
 
         // Interaction
         if flush {
@@ -218,16 +228,16 @@ pub fn trace_gpu(
             state.samples.store(0, Ordering::Relaxed);
             let _ = config_buffer.write(&[*state.config.read()]);
             let _ = output_buffer.write(&vec![Vec4::ZERO; pixel_count as usize]);
-            let _ = rng_buffer.write(if state.use_blue_noise.load(Ordering::Relaxed) { &rng_data_blue } else { &rng_data_uniform });
+            let _ = rng_buffer.write(if state.use_blue_noise.load(Ordering::Relaxed) {
+                &rng_data_blue
+            } else {
+                &rng_data_uniform
+            });
         }
     }
 }
 
-pub fn trace_cpu(
-    scene_path: &str,
-    skybox_path: Option<&str>,
-    state: Arc<TracingState>,
-) {
+pub fn trace_cpu(scene_path: &str, skybox_path: Option<&str>, state: Arc<TracingState>) {
     let Some(world) = World::from_path(scene_path) else {
         return;
     };
@@ -248,7 +258,9 @@ pub fn trace_cpu(
     for y in 0..screen_height {
         for x in 0..screen_width {
             let pixel_index = (y * screen_width + x) as usize;
-            let pixel = BLUE_TEXTURE.get_pixel(x % BLUE_TEXTURE.width(), y % BLUE_TEXTURE.height())[0] as f32 / 255.0;
+            let pixel = BLUE_TEXTURE.get_pixel(x % BLUE_TEXTURE.width(), y % BLUE_TEXTURE.height())
+                [0] as f32
+                / 255.0;
             rng_data_blue[pixel_index].x = 0;
             rng_data_blue[pixel_index].y = (pixel * 4294967295.0) as u32;
             rng_data_uniform[pixel_index].x = rand::Rng::gen(&mut rng);
@@ -257,11 +269,20 @@ pub fn trace_cpu(
 
     // Reset previous state, if there is any
     let samples_init = state.samples.load(Ordering::Relaxed) as f32;
-    let mut output_buffer = state.framebuffer.read().chunks(3).map(|c| Vec4::new(c[0], c[1], c[2], 1.0) * samples_init).collect::<Vec<_>>();
+    let mut output_buffer = state
+        .framebuffer
+        .read()
+        .chunks(3)
+        .map(|c| Vec4::new(c[0], c[1], c[2], 1.0) * samples_init)
+        .collect::<Vec<_>>();
 
     // Setup tracing state
     let pixel_count = (screen_width * screen_height) as u64;
-    let mut rng_buffer = if state.use_blue_noise.load(Ordering::Relaxed) { &mut rng_data_blue } else { &mut rng_data_uniform };
+    let mut rng_buffer = if state.use_blue_noise.load(Ordering::Relaxed) {
+        &mut rng_data_blue
+    } else {
+        &mut rng_data_uniform
+    };
 
     let mut image_buffer: Vec<f32> = vec![0.0; pixel_count as usize * 3];
 
@@ -272,10 +293,13 @@ pub fn trace_cpu(
 
     while state.running.load(Ordering::Relaxed) {
         // Dispatch
-        let flush = state.interacting.load(Ordering::Relaxed) || state.dirty.load(Ordering::Relaxed);
+        let flush =
+            state.interacting.load(Ordering::Relaxed) || state.dirty.load(Ordering::Relaxed);
         {
             let config = state.config.read();
-            let outputs = output_buffer.par_chunks_mut(screen_width as usize).enumerate();
+            let outputs = output_buffer
+                .par_chunks_mut(screen_width as usize)
+                .enumerate();
             let rngs = rng_buffer.par_chunks_mut(screen_width as usize);
             outputs.zip(rngs).for_each(|((y, output), rng)| {
                 for x in 0..screen_width {
@@ -307,21 +331,22 @@ pub fn trace_cpu(
             image_buffer[i * 3 + 2] = col.z / sample_count;
         }
 
-        // Denoise
-        #[cfg(feature = "oidn")]
-        if state.denoise.load(Ordering::Relaxed) && !flush {
-            denoise_image(screen_width as usize, screen_height as usize, &mut image_buffer);
-        }
-
         // Push to render thread
-        state.framebuffer.write().copy_from_slice(image_buffer.as_slice());
+        state
+            .framebuffer
+            .write()
+            .copy_from_slice(image_buffer.as_slice());
 
         // Interaction
         if flush {
             state.dirty.store(false, Ordering::Relaxed);
             state.samples.store(0, Ordering::Relaxed);
             output_buffer = vec![Vec4::ZERO; pixel_count as usize];
-            rng_buffer = if state.use_blue_noise.load(Ordering::Relaxed) { &mut rng_data_blue } else { &mut rng_data_uniform };
+            rng_buffer = if state.use_blue_noise.load(Ordering::Relaxed) {
+                &mut rng_data_blue
+            } else {
+                &mut rng_data_uniform
+            };
         }
     }
 }

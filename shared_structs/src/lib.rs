@@ -1,13 +1,13 @@
 #![no_std]
 
-use bytemuck::{Pod, Zeroable};
-use glam::{Vec3, Vec4, Vec4Swizzles, Vec2};
-
 mod image_polyfill;
-pub use image_polyfill::polyfill::{Image, Sampler};
+
+use bytemuck::{Pod, Zeroable};
+use glam::{Vec2, Vec3, Vec4, Vec4Swizzles};
+
 #[cfg(not(target_arch = "spirv"))]
 pub use image_polyfill::polyfill::CpuImage;
-
+pub use image_polyfill::polyfill::{Image, Sampler};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -26,7 +26,7 @@ pub struct TracingConfig {
 
 impl Default for TracingConfig {
     fn default() -> Self {
-        Self { 
+        Self {
             cam_position: Vec4::new(0.0, 1.0, -5.0, 0.0),
             cam_rotation: Vec4::ZERO,
             width: 1280,
@@ -43,7 +43,8 @@ impl Default for TracingConfig {
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
-pub struct MaterialData { // each Vec4 is either a color or an atlas location
+pub struct MaterialData {
+    // each Vec4 is either a color or an atlas location
     pub emissive: Vec4,
     pub albedo: Vec4,
     pub roughness: Vec4,
@@ -227,10 +228,10 @@ impl NextEventEstimation {
     }
 
     pub fn uses_mis(&self) -> bool {
-        self == &NextEventEstimation::MultipleImportanceSampling
+        *self == NextEventEstimation::MultipleImportanceSampling
     }
 
     pub fn uses_nee(&self) -> bool {
-        self != &NextEventEstimation::None
+        *self != NextEventEstimation::None
     }
 }

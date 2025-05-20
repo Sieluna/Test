@@ -44,7 +44,7 @@ pub fn reflect(i: Vec3, normal: Vec3) -> Vec3 {
 }
 
 #[allow(dead_code)]
-pub fn refract(i: Vec3,  normal: Vec3, in_ior: f32, out_ior: f32) -> Vec3 {
+pub fn refract(i: Vec3, normal: Vec3, in_ior: f32, out_ior: f32) -> Vec3 {
     let eta = in_ior / out_ior;
     let n_dot_i = normal.dot(i);
     let k = 1.0 - eta * eta * (1.0 - n_dot_i.powi(2));
@@ -89,13 +89,14 @@ pub fn sample_ggx(r1: f32, r2: f32, reflection_direction: Vec3, roughness: f32) 
 #[allow(dead_code)]
 pub fn ggx_distribution_microsurface_normal(
     m_dot_n: f32, // microsurface normal dot macrosurface normal
-    roughness: f32
+    roughness: f32,
 ) -> f32 {
     let a_g = roughness * roughness;
     let a_g2 = a_g * a_g;
     let theta_m = m_dot_n.acos();
     let numerator = a_g2 * positive_characteristic(m_dot_n);
-    let denominator = core::f32::consts::PI * theta_m.cos().powi(4) * (a_g2 + theta_m.tan().powi(2)).powi(2);
+    let denominator =
+        core::f32::consts::PI * theta_m.cos().powi(4) * (a_g2 + theta_m.tan().powi(2)).powi(2);
     numerator / denominator
 }
 
@@ -106,7 +107,7 @@ pub fn ggx_distribution_microsurface_normal(
 pub fn ggx_pdf_microsurface_normal(
     microsurface_normal: Vec3,
     macrosurface_normal: Vec3,
-    roughness: f32
+    roughness: f32,
 ) -> f32 {
     let m_dot_n = microsurface_normal.dot(macrosurface_normal);
     ggx_distribution_microsurface_normal(m_dot_n, roughness) * m_dot_n.abs()
@@ -118,7 +119,7 @@ pub fn sample_ggx_microsurface_normal(
     r1: f32,
     r2: f32,
     macrosurface_normal: Vec3,
-    roughness: f32
+    roughness: f32,
 ) -> Vec3 {
     let a_g = roughness * roughness;
 
@@ -128,14 +129,16 @@ pub fn sample_ggx_microsurface_normal(
     let m = Vec3::new(
         theta_m.sin() * phi_m.cos(),
         theta_m.cos(),
-        theta_m.sin() * phi_m.sin());
+        theta_m.sin() * phi_m.sin(),
+    );
 
     let (up, nt, nb) = create_cartesian(macrosurface_normal);
     Vec3::new(
         m.x * nb.x + m.y * up.x + m.z * nt.x,
         m.x * nb.y + m.y * up.y + m.z * nt.y,
         m.x * nb.z + m.y * up.z + m.z * nt.z,
-    ).normalize()
+    )
+    .normalize()
 }
 
 // PDF for sampling GGX(m)*|m.n| in case of reflection
@@ -147,7 +150,8 @@ pub fn ggx_pdf_reflection(
     macrosurface_normal: Vec3,
     pdf_microsurface_normal: f32, // pdf of sampling the specific microsurface normal
 ) -> f32 {
-    let h_r_hat = incoming_direction.dot(macrosurface_normal).signum() * (incoming_direction + outgoing_direction);
+    let h_r_hat = incoming_direction.dot(macrosurface_normal).signum()
+        * (incoming_direction + outgoing_direction);
     let h_r = h_r_hat.normalize();
     let jacobian = 1.0 / (4.0 * outgoing_direction.dot(h_r).abs());
     pdf_microsurface_normal * jacobian
@@ -167,7 +171,8 @@ pub fn ggx_pdf_refraction(
     let h_t = h_t_hat.normalize();
     let o_dot_h_t = outgoing_direction.dot(h_t);
     let numerator = out_ior.powi(2) * o_dot_h_t.abs();
-    let denominator = (in_ior * incoming_direction.dot(h_t) + out_ior * (outgoing_direction.dot(h_t))).powi(2);
+    let denominator =
+        (in_ior * incoming_direction.dot(h_t) + out_ior * (outgoing_direction.dot(h_t))).powi(2);
     let jacobian = numerator / denominator;
     pdf_microsurface_normal * jacobian
 }
@@ -178,7 +183,7 @@ pub fn geometry_ggx_microfacet_normal(
     macrosurface_normal: Vec3,
     microsurface_normal: Vec3,
     view_direction: Vec3,
-    roughness: f32
+    roughness: f32,
 ) -> f32 {
     let a_g = roughness * roughness;
     let a_g2 = a_g * a_g;
@@ -203,8 +208,17 @@ pub fn geometry_smith_microfacet_normal(
     light_direction: Vec3,
     roughness: f32,
 ) -> f32 {
-    geometry_ggx_microfacet_normal(macrosurface_normal, microsurface_normal, view_direction, roughness)
-        * geometry_ggx_microfacet_normal(macrosurface_normal, microsurface_normal, light_direction, roughness)
+    geometry_ggx_microfacet_normal(
+        macrosurface_normal,
+        microsurface_normal,
+        view_direction,
+        roughness,
+    ) * geometry_ggx_microfacet_normal(
+        macrosurface_normal,
+        microsurface_normal,
+        light_direction,
+        roughness,
+    )
 }
 
 // Schlick-GGX geometry function from https://learnopengl.com/pbr/theory

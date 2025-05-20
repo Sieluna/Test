@@ -1,9 +1,12 @@
 use shared_structs::{MaterialData, TracingConfig};
-use spirv_std::{glam::{Vec3, Vec2, Vec4Swizzles}};
+use spirv_std::glam::{Vec2, Vec3, Vec4Swizzles};
 #[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 
-use crate::{rng, util::{self}};
+use crate::{
+    rng,
+    util::{self},
+};
 use shared_structs::{Image, Sampler};
 
 type Spectrum = Vec3;
@@ -11,9 +14,11 @@ type Spectrum = Vec3;
 #[derive(Default, Copy, Clone, PartialEq)]
 #[repr(u32)]
 pub enum LobeType {
-    #[default] DiffuseReflection,
+    #[default]
+    DiffuseReflection,
     SpecularReflection,
-    #[allow(dead_code)] DiffuseTransmission,
+    #[allow(dead_code)]
+    DiffuseTransmission,
     SpecularTransmission,
 }
 
@@ -131,13 +136,25 @@ impl BSDF for Glass {
         let inside = normal.dot(view_direction) < 0.0;
         let normal = if inside { -normal } else { normal };
         let in_ior = if inside { self.ior } else { 1.0 };
-        let out_ior = if inside { 1.0 } else { self.ior }; 
+        let out_ior = if inside { 1.0 } else { self.ior };
 
-        let microsurface_normal = util::sample_ggx_microsurface_normal(rng_sample.x, rng_sample.y, normal, self.roughness);
-        let fresnel = util::fresnel_schlick_scalar(in_ior, out_ior, microsurface_normal.dot(view_direction).max(0.0));
+        let microsurface_normal = util::sample_ggx_microsurface_normal(
+            rng_sample.x,
+            rng_sample.y,
+            normal,
+            self.roughness,
+        );
+        let fresnel = util::fresnel_schlick_scalar(
+            in_ior,
+            out_ior,
+            microsurface_normal.dot(view_direction).max(0.0),
+        );
         if rng_sample.z <= fresnel {
             // Reflection
-            let sampled_direction = (2.0 * view_direction.dot(microsurface_normal).abs() * microsurface_normal - view_direction).normalize();
+            let sampled_direction =
+                (2.0 * view_direction.dot(microsurface_normal).abs() * microsurface_normal
+                    - view_direction)
+                    .normalize();
             let pdf = 1.0;
             let sampled_lobe = LobeType::SpecularReflection;
             let spectrum = Vec3::ONE;
@@ -151,7 +168,12 @@ impl BSDF for Glass {
             // Refraction
             let eta = in_ior / out_ior;
             let c = view_direction.dot(microsurface_normal);
-            let sampled_direction = ((eta * c - (view_direction.dot(normal)).signum() * (1.0 + eta * (c * c - 1.0)).max(0.0).sqrt()) * microsurface_normal - eta * view_direction).normalize();
+            let sampled_direction = ((eta * c
+                - (view_direction.dot(normal)).signum()
+                    * (1.0 + eta * (c * c - 1.0)).max(0.0).sqrt())
+                * microsurface_normal
+                - eta * view_direction)
+                .normalize();
             let pdf = 1.0;
             let sampled_lobe = LobeType::SpecularTransmission;
             let spectrum = self.albedo;
@@ -190,12 +212,7 @@ pub struct PBR {
 }
 
 impl PBR {
-    fn evaluate_diffuse_fast(
-        &self,
-        cos_theta: f32,
-        specular_weight: f32,
-        ks: Vec3,
-    ) -> Spectrum {
+    fn evaluate_diffuse_fast(&self, cos_theta: f32, specular_weight: f32, ks: Vec3) -> Spectrum {
         let kd = (Vec3::splat(1.0) - ks) * (1.0 - self.metallic);
         let diffuse = kd * self.albedo / core::f32::consts::PI;
         diffuse * cos_theta / (1.0 - specular_weight)
@@ -211,7 +228,12 @@ impl PBR {
         specular_weight: f32,
         ks: Vec3,
     ) -> Spectrum {
-        let g_term = util::geometry_smith_schlick_ggx(normal, view_direction, sample_direction, self.roughness);
+        let g_term = util::geometry_smith_schlick_ggx(
+            normal,
+            view_direction,
+            sample_direction,
+            self.roughness,
+        );
         let specular_numerator = d_term * g_term * ks;
         let specular_denominator = 4.0 * normal.dot(view_direction).max(0.0) * cos_theta;
         let specular = specular_numerator / specular_denominator.max(util::EPS);
@@ -241,10 +263,12 @@ impl BSDF for PBR {
         sample_direction: Vec3,
         lobe_type: LobeType,
     ) -> Spectrum {
-        let approx_fresnel = util::fresnel_schlick_scalar(1.0, DIELECTRIC_IOR, normal.dot(view_direction).max(0.0));
+        let approx_fresnel =
+            util::fresnel_schlick_scalar(1.0, DIELECTRIC_IOR, normal.dot(view_direction).max(0.0));
         let mut specular_weight = util::lerp(approx_fresnel, 1.0, self.metallic);
         if specular_weight != 0.0 && specular_weight != 1.0 {
-            specular_weight = specular_weight.clamp(self.specular_weight_clamp.x, self.specular_weight_clamp.y);
+            specular_weight =
+                specular_weight.clamp(self.specular_weight_clamp.x, self.specular_weight_clamp.y);
         }
 
         let cos_theta = normal.dot(sample_direction).max(0.0);
@@ -272,11 +296,13 @@ impl BSDF for PBR {
     fn sample(&self, view_direction: Vec3, normal: Vec3, rng: &mut rng::RngState) -> BSDFSample {
         let rng_sample = rng.gen_r3();
 
-        let approx_fresnel = util::fresnel_schlick_scalar(1.0, DIELECTRIC_IOR, normal.dot(view_direction).max(0.0));
+        let approx_fresnel =
+            util::fresnel_schlick_scalar(1.0, DIELECTRIC_IOR, normal.dot(view_direction).max(0.0));
         let mut specular_weight = util::lerp(approx_fresnel, 1.0, self.metallic);
         // Clamp specular weight to prevent firelies. See Jakub Boksansky and Adam Marrs in RT gems 2 chapter 14.
         if specular_weight != 0.0 && specular_weight != 1.0 {
-            specular_weight = specular_weight.clamp(self.specular_weight_clamp.x, self.specular_weight_clamp.y);
+            specular_weight =
+                specular_weight.clamp(self.specular_weight_clamp.x, self.specular_weight_clamp.y);
         }
 
         let (sampled_direction, sampled_lobe) = if rng_sample.z >= specular_weight {
@@ -306,24 +332,35 @@ impl BSDF for PBR {
         let f0 = Vec3::splat(DIELECTRIC_F0).lerp(self.albedo, self.metallic);
         let ks = util::fresnel_schlick(halfway.dot(view_direction).max(0.0), f0);
 
-        let (sampled_direction, sampled_lobe, pdf, spectrum) = if sampled_lobe == LobeType::DiffuseReflection {
-            let pdf = self.pdf_diffuse_fast(cos_theta);
-            let spectrum = self.evaluate_diffuse_fast(cos_theta, specular_weight, ks);
-            (sampled_direction, LobeType::DiffuseReflection, pdf, spectrum)
-        } else {
-            let d_term = util::ggx_distribution(normal, halfway, self.roughness);
-            let pdf = self.pdf_specular_fast(view_direction, normal, halfway, d_term);
-            let spectrum = self.evaluate_specular_fast(
-                view_direction,
-                normal,
-                sampled_direction,
-                cos_theta,
-                d_term,
-                specular_weight,
-                ks,
-            );
-            (sampled_direction, LobeType::SpecularReflection, pdf, spectrum)
-        };
+        let (sampled_direction, sampled_lobe, pdf, spectrum) =
+            if sampled_lobe == LobeType::DiffuseReflection {
+                let pdf = self.pdf_diffuse_fast(cos_theta);
+                let spectrum = self.evaluate_diffuse_fast(cos_theta, specular_weight, ks);
+                (
+                    sampled_direction,
+                    LobeType::DiffuseReflection,
+                    pdf,
+                    spectrum,
+                )
+            } else {
+                let d_term = util::ggx_distribution(normal, halfway, self.roughness);
+                let pdf = self.pdf_specular_fast(view_direction, normal, halfway, d_term);
+                let spectrum = self.evaluate_specular_fast(
+                    view_direction,
+                    normal,
+                    sampled_direction,
+                    cos_theta,
+                    d_term,
+                    specular_weight,
+                    ks,
+                );
+                (
+                    sampled_direction,
+                    LobeType::SpecularReflection,
+                    pdf,
+                    spectrum,
+                )
+            };
 
         BSDFSample {
             pdf,
@@ -351,7 +388,13 @@ impl BSDF for PBR {
     }
 }
 
-pub fn get_pbr_bsdf(config: &TracingConfig, material: &MaterialData, uv: Vec2, atlas: &Image!(2D, type=f32, sampled), sampler: &Sampler) -> PBR {
+pub fn get_pbr_bsdf(
+    config: &TracingConfig,
+    material: &MaterialData,
+    uv: Vec2,
+    atlas: &Image!(2D, type=f32, sampled),
+    sampler: &Sampler,
+) -> PBR {
     let albedo = if material.has_albedo_texture() {
         let scaled_uv = material.albedo.xy() + uv * material.albedo.zw();
         let albedo = atlas.sample_by_lod(*sampler, scaled_uv, 0.0);

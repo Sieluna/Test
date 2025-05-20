@@ -1,8 +1,9 @@
 use glam::{UVec4, Vec3, Vec4, Vec4Swizzles};
-use gpgpu::{GpuBuffer, BufOps};
-use shared_structs::{BVHNode};
+use shared_structs::BVHNode;
 
 use crate::trace::FW;
+
+use super::framework::{BufOps, GpuBuffer};
 
 // TODO: Use triangle buffer directly instead of 2 indirections
 
@@ -107,7 +108,7 @@ impl<'a> BVHBuilder<'a> {
         let mut right_box = BVHNode::default();
         let mut left_tri_count = 0;
         let mut right_tri_count = 0;
-    
+
         for i in 0..node.triangle_count() {
             let triangle_index = (node.left_node_index() + i) as usize;
             let index = self.indices[triangle_index];
@@ -115,7 +116,7 @@ impl<'a> BVHBuilder<'a> {
             let v1 = self.vertices[index.y as usize].xyz();
             let v2 = self.vertices[index.z as usize].xyz();
             let centroid = self.centroids[triangle_index];
-    
+
             if centroid[axis] < split {
                 left_box.encapsulate(&v0);
                 left_box.encapsulate(&v1);
@@ -128,8 +129,9 @@ impl<'a> BVHBuilder<'a> {
                 right_tri_count += 1;
             }
         }
-        
-        let result = left_box.area() * left_tri_count as f32 + right_box.area() * right_tri_count as f32;
+
+        let result =
+            left_box.area() * left_tri_count as f32 + right_box.area() * right_tri_count as f32;
         if result > 0.0 {
             result
         } else {
@@ -210,7 +212,9 @@ impl<'a> BVHBuilder<'a> {
                 let v0 = self.vertices[index.x as usize].xyz();
                 let v1 = self.vertices[index.y as usize].xyz();
                 let v2 = self.vertices[index.z as usize].xyz();
-                let segment_index = (((self.centroids[triangle_index][axis] - bounds_min) * scale) as usize).min(self.sah_samples - 1);
+                let segment_index = (((self.centroids[triangle_index][axis] - bounds_min) * scale)
+                    as usize)
+                    .min(self.sah_samples - 1);
                 segments[segment_index].aabb.encapsulate(&v0);
                 segments[segment_index].aabb.encapsulate(&v1);
                 segments[segment_index].aabb.encapsulate(&v2);
@@ -241,8 +245,9 @@ impl<'a> BVHBuilder<'a> {
 
             // evaluate SAH for each split, pick the best
             let scale = (bounds_max - bounds_min) / self.sah_samples as f32;
-            for i in 0..self.sah_samples-1 {
-                let cost = left_tri_counts[i] as f32 * left_areas[i] + right_tri_counts[i] as f32 * right_areas[i];
+            for i in 0..self.sah_samples - 1 {
+                let cost = left_tri_counts[i] as f32 * left_areas[i]
+                    + right_tri_counts[i] as f32 * right_areas[i];
                 if cost < best_cost {
                     best_axis = axis;
                     best_split = bounds_min + scale * (i + 1) as f32;

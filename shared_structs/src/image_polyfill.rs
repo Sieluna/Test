@@ -2,25 +2,25 @@
 
 #[cfg(target_arch = "spirv")]
 pub mod polyfill {
-    pub use spirv_std::{Sampler, Image};
+    pub use spirv_std::{Image, Sampler};
 }
 
 #[cfg(not(target_arch = "spirv"))]
 pub mod polyfill {
-    use glam::{Vec4, Vec2, IVec2};
+    use glam::{IVec2, Vec2, Vec4};
 
     #[derive(Clone, Copy)]
     pub struct Sampler;
 
-    pub struct Image<'a, A,B,C,D,E,F> {
-        _phantom: core::marker::PhantomData<(A,B,C,D,E,F)>,
+    pub struct Image<'a, A, B, C, D, E, F> {
+        _phantom: core::marker::PhantomData<(A, B, C, D, E, F)>,
         width: u32,
         height: u32,
         buffer: &'a [Vec4],
     }
 
-    impl<'a, A> Image<'a, A,A,A,A,A,A> {
-        pub const fn new (buffer: &'a [Vec4], width: u32, height: u32) -> Self {
+    impl<'a, A> Image<'a, A, A, A, A, A, A> {
+        pub const fn new(buffer: &'a [Vec4], width: u32, height: u32) -> Self {
             Image {
                 _phantom: core::marker::PhantomData,
                 width,
@@ -60,5 +60,5 @@ pub mod polyfill {
         ($a:expr, $b:ident=$d:ident, $c:expr) => { Image<(), (), (), (), (), ()> };
     }
 
-    pub type CpuImage<'fw> = Image<'fw, (),(),(),(),(),()>;
+    pub type CpuImage<'fw> = Image<'fw, (), (), (), (), (), ()>;
 }
