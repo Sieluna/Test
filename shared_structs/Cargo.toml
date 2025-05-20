@@ -1,0 +1,9 @@
+[package]
+name = "shared_structs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = { version = "1.13.1", features = ["derive"] }
+glam = { version = "0.22", default-features = false, features = ["bytemuck"] }
+spirv-std = "0.7.0"
